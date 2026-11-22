@@ -1,0 +1,1470 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>CBH Go — ระบบนำทาง 3 มิติ โรงพยาบาลชลบุรี (Full Admin)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <style>
+    * { font-family: 'Prompt', sans-serif; box-sizing: border-box; }
+    body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #dbeafe; }
+    #canvas-container { position: fixed; inset: 0; z-index: 1; }
+    .glass-panel {
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.8);
+      box-shadow: 0 10px 28px -5px rgba(15, 23, 42, 0.14);
+    }
+    .custom-scroll::-webkit-scrollbar { width: 5px; height: 5px; }
+    .custom-scroll::-webkit-scrollbar-track { background: transparent; }
+    .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 999px; }
+    .building-label {
+      position: absolute;
+      transform: translate(-50%, -100%);
+      pointer-events: auto;
+      cursor: pointer;
+      transition: transform 0.15s ease;
+      z-index: 5;
+    }
+    .building-label:hover { transform: translate(-50%, -108%) scale(1.06); z-index: 15; }
+    .node-badge {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      pointer-events: auto;
+      cursor: pointer;
+      z-index: 8;
+    }
+  </style>
+</head>
+<body class="text-slate-800 select-none">
+
+  <!-- 3D Canvas & Floating Labels -->
+  <div id="canvas-container"></div>
+  <div id="labels-layer" class="fixed inset-0 pointer-events-none z-10 overflow-hidden"></div>
+  <div id="nodes-layer" class="fixed inset-0 pointer-events-none z-10 overflow-hidden"></div>
+
+  <!-- Admin Mode Top Banner -->
+  <div id="admin-banner" class="hidden fixed top-0 left-0 right-0 z-40 bg-slate-900 text-white px-4 py-2 flex flex-wrap items-center justify-between gap-2 shadow-lg border-b border-amber-400/40">
+    <div class="flex items-center gap-2 text-xs">
+      <span class="px-2 py-0.5 rounded bg-amber-500 text-slate-950 font-bold">ADMIN STUDIO</span>
+      <span id="admin-hint-text" class="text-slate-200">คลิกเลือกตึกเพื่อแก้ไข หรือเลือกเครื่องมือด้านซ้ายเพื่อสร้างตึก/ทางเดินใหม่</span>
+    </div>
+    <div class="flex items-center gap-2 text-xs">
+      <button onclick="exportJsonFile()" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-600">
+        <i class="fa-solid fa-download mr-1"></i> Export JSON
+      </button>
+      <label class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-600 cursor-pointer">
+        <i class="fa-solid fa-upload mr-1"></i> Import
+        <input type="file" accept=".json" onchange="importJsonFile(event)" class="hidden" />
+      </label>
+      <button onclick="saveAllToCloud()" class="px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 font-semibold shadow">
+        <i class="fa-solid fa-cloud-arrow-up mr-1"></i> บันทึกข้อมูลทั้งหมด
+      </button>
+      <button onclick="exitAdminMode()" class="px-2.5 py-1 rounded bg-rose-600 hover:bg-rose-500 font-medium">
+        ออกจาก Admin
+      </button>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- USER MODE PANEL (Left Floating Card)                                  -->
+  <!-- ===================================================================== -->
+  <div id="user-panel" class="fixed top-3 left-3 right-3 md:right-auto md:w-[400px] z-20 flex flex-col gap-2">
+    <div class="glass-panel rounded-2xl p-3.5">
+      <!-- Header -->
+      <div class="flex items-center justify-between mb-2.5">
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-sky-600 to-blue-700 text-white flex items-center justify-center shadow">
+            <i class="fa-solid fa-hospital text-base"></i>
+          </div>
+          <div>
+            <div class="flex items-center gap-1.5">
+              <h1 class="font-bold text-base text-slate-900 leading-tight">CBH Go</h1>
+              <span class="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-sky-100 text-sky-700">ผัง 3D จริง</span>
+            </div>
+            <p class="text-[11px] text-slate-500">นำทางภายในโรงพยาบาลชลบุรี</p>
+          </div>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <button onclick="toggleModal('qr-modal')" title="จุดยืน QR Code" class="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium flex items-center gap-1 transition">
+            <i class="fa-solid fa-qrcode text-sky-600"></i> จุดยืน QR
+          </button>
+          <button onclick="openAdminLogin()" title="เข้าสู่ระบบผู้ดูแล (Admin)" class="w-8 h-8 rounded-lg bg-slate-900 hover:bg-slate-800 text-amber-400 flex items-center justify-center shadow transition">
+            <i class="fa-solid fa-screwdriver-wrench text-xs"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Search Box -->
+      <div class="relative mb-2">
+        <div class="flex items-center gap-2 bg-slate-50 border border-slate-200 focus-within:border-sky-500 focus-within:bg-white rounded-xl px-3 py-2 transition">
+          <i class="fa-solid fa-magnifying-glass text-slate-400 text-xs"></i>
+          <input id="search-input" type="text" placeholder="ค้นหาแผนก, อาคาร, เจาะเลือด, ห้องบัตร, ER, จอดรถ..."
+            oninput="handleSearch(this.value)" onfocus="handleSearch(this.value)"
+            class="w-full bg-transparent text-xs text-slate-800 placeholder-slate-400 focus:outline-none" />
+          <button id="clear-btn" onclick="clearSearch()" class="hidden text-slate-400 hover:text-slate-600">
+            <i class="fa-solid fa-circle-xmark"></i>
+          </button>
+        </div>
+        <div id="search-results" class="hidden absolute left-0 right-0 mt-1.5 bg-white rounded-xl shadow-xl border border-slate-200 max-h-60 overflow-y-auto custom-scroll z-30 divide-y divide-slate-100"></div>
+      </div>
+
+      <!-- Quick Pills -->
+      <div class="flex gap-1.5 overflow-x-auto custom-scroll pb-2 mb-2 border-b border-slate-100">
+        <button onclick="quickSelectClinic('c01')" class="shrink-0 text-[11px] px-2.5 py-1 rounded-full bg-sky-50 hover:bg-sky-100 text-sky-700 font-medium border border-sky-200">🪪 ห้องบัตร</button>
+        <button onclick="quickSelectClinic('c02')" class="shrink-0 text-[11px] px-2.5 py-1 rounded-full bg-rose-50 hover:bg-rose-100 text-rose-700 font-medium border border-rose-200">🩸 เจาะเลือด</button>
+        <button onclick="quickSelectClinic('c03')" class="shrink-0 text-[11px] px-2.5 py-1 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-medium border border-emerald-200">💊 ห้องยา</button>
+        <button onclick="quickSelectBuilding('kuman')" class="shrink-0 text-[11px] px-2.5 py-1 rounded-full bg-amber-50 hover:bg-amber-100 text-amber-800 font-medium border border-amber-200">👶 ตึกกุมาร</button>
+        <button onclick="quickSelectBuilding('chalarak')" class="shrink-0 text-[11px] px-2.5 py-1 rounded-full bg-orange-50 hover:bg-orange-100 text-orange-800 font-medium border border-orange-200">🤰 ตึกชลารักษ์</button>
+      </div>
+
+      <!-- Start & Destination Selectors -->
+      <div class="space-y-1.5 mb-2.5">
+        <div class="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5">
+          <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 ring-4 ring-emerald-100 shrink-0"></span>
+          <div class="flex-1 min-w-0">
+            <div class="text-[9px] font-bold text-slate-400 uppercase">จุดเริ่มต้น (START)</div>
+            <select id="start-select" onchange="recalculateRoute()" class="w-full bg-transparent text-xs font-medium text-slate-800 focus:outline-none truncate"></select>
+          </div>
+        </div>
+        <div class="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5">
+          <i class="fa-solid fa-location-dot text-rose-500 text-xs shrink-0"></i>
+          <div class="flex-1 min-w-0">
+            <div class="text-[9px] font-bold text-slate-400 uppercase">จุดหมายปลายทาง (DESTINATION)</div>
+            <select id="dest-select" onchange="onDestDropdownChange()" class="w-full bg-transparent text-xs font-medium text-slate-800 focus:outline-none truncate"></select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Travel Mode -->
+      <div class="grid grid-cols-3 gap-1.5 bg-slate-100 p-1 rounded-xl text-xs font-medium">
+        <button onclick="setMode('walk')" id="mode-walk" class="mode-btn py-1.5 px-2 rounded-lg bg-white text-sky-700 shadow-sm flex items-center justify-center gap-1.5">
+          <i class="fa-solid fa-person-walking"></i> เดินเท้า
+        </button>
+        <button onclick="setMode('wheelchair')" id="mode-wheelchair" class="mode-btn py-1.5 px-2 rounded-lg text-slate-600 flex items-center justify-center gap-1.5">
+          <i class="fa-solid fa-wheelchair"></i> รถเข็น/ทางลาด
+        </button>
+        <button onclick="setMode('car')" id="mode-car" class="mode-btn py-1.5 px-2 rounded-lg text-slate-600 flex items-center justify-center gap-1.5">
+          <i class="fa-solid fa-car"></i> ขับรถยนต์
+        </button>
+      </div>
+    </div>
+
+    <!-- Route Result Card -->
+    <div id="route-card" class="hidden glass-panel rounded-2xl p-3.5 border-l-4 border-l-sky-600">
+      <div class="flex items-center justify-between">
+        <div>
+          <div class="flex items-baseline gap-2">
+            <span id="route-time" class="font-bold text-lg text-sky-700">4 นาที</span>
+            <span id="route-dist" class="text-xs text-slate-500">(278 เมตร)</span>
+          </div>
+          <p id="route-sub" class="text-[11px] text-slate-600">เส้นทางเดินแนะนำ • ทางเดินสะดวก</p>
+        </div>
+        <button onclick="focusRouteCamera()" class="px-3 py-1.5 rounded-full bg-sky-50 hover:bg-sky-100 text-sky-700 text-xs font-semibold border border-sky-200 transition">
+          <i class="fa-solid fa-crosshairs mr-1"></i> ดูเส้นทาง
+        </button>
+      </div>
+
+      <details class="mt-2 bg-sky-600 text-white rounded-xl overflow-hidden" open>
+        <summary class="px-3 py-2 text-xs font-semibold cursor-pointer flex items-center justify-between">
+          <span><i class="fa-solid fa-list-ol mr-1.5"></i> ขั้นตอนการนำทาง (<span id="step-count">0</span> ขั้นตอน)</span>
+          <i class="fa-solid fa-chevron-down text-[10px]"></i>
+        </summary>
+        <div id="route-steps" class="bg-white text-slate-700 p-2.5 space-y-1.5 max-h-36 overflow-y-auto custom-scroll text-xs"></div>
+      </details>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- FULL ADMIN STUDIO PANEL (Visible only in Admin Mode)                  -->
+  <!-- ===================================================================== -->
+  <div id="admin-panel" class="hidden fixed top-12 left-3 bottom-3 w-[390px] z-30 glass-panel rounded-2xl flex flex-col overflow-hidden border-2 border-amber-400">
+    <!-- Admin Tabs -->
+    <div class="grid grid-cols-3 bg-slate-900 text-white text-xs font-semibold">
+      <button onclick="switchAdminTab('buildings')" id="tab-buildings" class="admin-tab py-2.5 bg-amber-500 text-slate-950 flex items-center justify-center gap-1.5">
+        <i class="fa-solid fa-building"></i> ตึก/อาคาร
+      </button>
+      <button onclick="switchAdminTab('paths')" id="tab-paths" class="admin-tab py-2.5 text-slate-300 hover:text-white flex items-center justify-center gap-1.5">
+        <i class="fa-solid fa-route"></i> ทางเดิน/ถนน
+      </button>
+      <button onclick="switchAdminTab('clinics')" id="tab-clinics" class="admin-tab py-2.5 text-slate-300 hover:text-white flex items-center justify-center gap-1.5">
+        <i class="fa-solid fa-stethoscope"></i> ย้ายหน่วยงาน
+      </button>
+    </div>
+
+    <!-- TAB 1: BUILDINGS EDITOR -->
+    <div id="pane-buildings" class="p-3.5 flex-1 overflow-y-auto custom-scroll space-y-3 text-xs">
+      <div class="flex items-center justify-between">
+        <span class="font-bold text-slate-800">จัดการอาคาร 3 มิติ (<span id="bld-count">0</span> แห่ง)</span>
+        <button onclick="startAddBuildingOnMap()" class="px-2.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white font-semibold shadow-sm">
+          <i class="fa-solid fa-plus mr-1"></i> คลิกวางตึกใหม่บน 3D
+        </button>
+      </div>
+
+      <!-- Building Form -->
+      <div id="bld-editor-form" class="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
+        <div class="flex items-center justify-between">
+          <span class="font-bold text-sky-800" id="bld-form-title">เลือกตึกบนแผนที่ 3D หรือจากรายการเพื่อแก้ไข</span>
+          <button onclick="deleteSelectedBuilding()" id="btn-del-bld" class="hidden text-rose-600 hover:underline text-[11px]">
+            <i class="fa-solid fa-trash"></i> ลบตึกนี้
+          </button>
+        </div>
+        <input type="hidden" id="edit-bld-id" />
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="text-[10px] text-slate-500">ชื่อย่อป้าย 3D</label>
+            <input id="edit-bld-name" type="text" class="w-full border rounded-lg px-2 py-1 bg-white" />
+          </div>
+          <div>
+            <label class="text-[10px] text-slate-500">จุดเชื่อมต่อทางเดิน (Entry Node)</label>
+            <select id="edit-bld-node" class="w-full border rounded-lg px-2 py-1 bg-white"></select>
+          </div>
+        </div>
+        <div>
+          <label class="text-[10px] text-slate-500">ชื่อเต็มอาคาร</label>
+          <input id="edit-bld-full" type="text" class="w-full border rounded-lg px-2 py-1 bg-white" />
+        </div>
+        <div class="grid grid-cols-5 gap-1.5">
+          <div>
+            <label class="text-[10px] text-slate-500">X</label>
+            <input id="edit-bld-x" type="number" step="1" onchange="liveUpdateBuilding()" class="w-full border rounded px-1.5 py-1 bg-white" />
+          </div>
+          <div>
+            <label class="text-[10px] text-slate-500">Z</label>
+            <input id="edit-bld-z" type="number" step="1" onchange="liveUpdateBuilding()" class="w-full border rounded px-1.5 py-1 bg-white" />
+          </div>
+          <div>
+            <label class="text-[10px] text-slate-500">กว้าง</label>
+            <input id="edit-bld-w" type="number" min="4" onchange="liveUpdateBuilding()" class="w-full border rounded px-1.5 py-1 bg-white" />
+          </div>
+          <div>
+            <label class="text-[10px] text-slate-500">ยาว</label>
+            <input id="edit-bld-d" type="number" min="4" onchange="liveUpdateBuilding()" class="w-full border rounded px-1.5 py-1 bg-white" />
+          </div>
+          <div>
+            <label class="text-[10px] text-slate-500">สูง</label>
+            <input id="edit-bld-h" type="number" min="4" onchange="liveUpdateBuilding()" class="w-full border rounded px-1.5 py-1 bg-white" />
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-2 items-center">
+          <div>
+            <label class="text-[10px] text-slate-500">สีตัวอาคาร</label>
+            <input id="edit-bld-color" type="color" onchange="liveUpdateBuilding()" class="w-full h-7 rounded cursor-pointer" />
+          </div>
+          <div>
+            <label class="text-[10px] text-slate-500">สีขอบหลังคา</label>
+            <input id="edit-bld-roof" type="color" onchange="liveUpdateBuilding()" class="w-full h-7 rounded cursor-pointer" />
+          </div>
+        </div>
+        <div>
+          <label class="text-[10px] text-slate-500">รายละเอียดอาคาร</label>
+          <input id="edit-bld-desc" type="text" class="w-full border rounded-lg px-2 py-1 bg-white" />
+        </div>
+        <button onclick="applyBuildingForm()" class="w-full py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-semibold">
+          อัปเดตข้อมูลอาคารนี้
+        </button>
+      </div>
+
+      <!-- Building List -->
+      <div id="admin-bld-list" class="space-y-1"></div>
+    </div>
+
+    <!-- TAB 2: PATHS & NODES EDITOR -->
+    <div id="pane-paths" class="hidden p-3.5 flex-1 overflow-y-auto custom-scroll space-y-3 text-xs">
+      <div class="bg-amber-50 border border-amber-200 rounded-xl p-2.5 text-[11px] text-amber-900">
+        <strong>วิธีสร้างทางเดินใหม่:</strong> กดปุ่มด้านล่าง แล้วคลิกบนพื้นแผนที่ 3D เพื่อปักจุดทางแยก (Node) จากนั้นลากเชื่อมเส้นทางระหว่างจุดได้ทันที
+      </div>
+
+      <div class="grid grid-cols-2 gap-2">
+        <button onclick="startAddNodeOnMap()" class="py-2 px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-sm">
+          <i class="fa-solid fa-location-pin mr-1"></i> ปักจุดทางแยก (Node)
+        </button>
+        <button onclick="toggleConnectMode()" id="btn-connect-mode" class="py-2 px-2.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-semibold shadow-sm">
+          <i class="fa-solid fa-bezier-curve mr-1"></i> เชื่อมเส้นทาง (Edge)
+        </button>
+      </div>
+
+      <!-- Add Edge Manual Form -->
+      <div class="bg-slate-50 border border-slate-200 rounded-xl p-2.5 space-y-2">
+        <div class="font-bold text-slate-800">สร้าง / แก้ไขเส้นทางเชื่อมต่อ</div>
+        <div class="grid grid-cols-2 gap-1.5">
+          <select id="edge-from" class="border rounded-lg px-2 py-1 bg-white"></select>
+          <select id="edge-to" class="border rounded-lg px-2 py-1 bg-white"></select>
+        </div>
+        <div class="grid grid-cols-2 gap-1.5">
+          <select id="edge-type" class="border rounded-lg px-2 py-1 bg-white">
+            <option value="walk">🚶 ทางเดินเท้า / ทางเชื่อม</option>
+            <option value="wheelchair">♿ ทางลาดรถเข็น / ลิฟต์</option>
+            <option value="oneway">🔴 ถนน One-Way (รถ+คน)</option>
+            <option value="twoway">🟢 ถนน Two-Way (รถ+คน)</option>
+          </select>
+          <input id="edge-dist" type="number" value="60" placeholder="ระยะ (เมตร)" class="border rounded-lg px-2 py-1 bg-white" />
+        </div>
+        <input id="edge-hint" type="text" placeholder="คำอธิบายทางเดิน เช่น เดินผ่านทางเชื่อมมีหลังคาคลุม..." class="w-full border rounded-lg px-2 py-1 bg-white" />
+        <button onclick="addNewEdge()" class="w-full py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white font-semibold">
+          + เพิ่มเส้นทางนี้ลงแผนที่
+        </button>
+      </div>
+
+      <!-- Existing Edges List (Can Close/Open or Delete) -->
+      <div>
+        <div class="font-bold text-slate-700 mb-1.5">รายการเส้นทางทั้งหมด (<span id="edge-count">0</span> เส้น)</div>
+        <div id="admin-edge-list" class="space-y-1.5"></div>
+      </div>
+    </div>
+
+    <!-- TAB 3: CLINICS & DEPARTMENTS MOVER -->
+    <div id="pane-clinics" class="hidden p-3.5 flex-1 overflow-y-auto custom-scroll space-y-3 text-xs">
+      <div class="bg-slate-50 border border-slate-200 rounded-xl p-2.5 space-y-2">
+        <div class="font-bold text-sky-800">เพิ่ม / ย้ายตึกหน่วยงานหรือคลินิก</div>
+        <input type="hidden" id="edit-clinic-id" />
+        <input id="edit-clinic-name" type="text" placeholder="ชื่อคลินิก / หน่วยงาน เช่น คลินิกอายุรกรรม" class="w-full border rounded-lg px-2 py-1.5 bg-white" />
+        <div class="grid grid-cols-2 gap-1.5">
+          <select id="edit-clinic-bld" class="border rounded-lg px-2 py-1.5 bg-white"></select>
+          <input id="edit-clinic-floor" type="text" placeholder="ชั้น เช่น ชั้น 2" class="border rounded-lg px-2 py-1.5 bg-white" />
+        </div>
+        <div class="grid grid-cols-2 gap-1.5">
+          <input id="edit-clinic-hours" type="text" placeholder="เวลาเปิด เช่น 08:00-16:00" class="border rounded-lg px-2 py-1.5 bg-white" />
+          <input id="edit-clinic-phone" type="text" placeholder="เบอร์ภายใน เช่น 1205" class="border rounded-lg px-2 py-1.5 bg-white" />
+        </div>
+        <input id="edit-clinic-kw" type="text" placeholder="คำค้นหาพ้องความหมาย (คั่นด้วยเว้นวรรค)" class="w-full border rounded-lg px-2 py-1.5 bg-white" />
+        <button onclick="saveClinicItem()" class="w-full py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold">
+          บันทึกข้อมูลหน่วยงาน
+        </button>
+      </div>
+
+      <div id="admin-clinic-list" class="space-y-1.5"></div>
+    </div>
+  </div>
+
+  <!-- Right Floating Map Controls -->
+  <div class="fixed right-3 top-3 md:top-14 z-20 flex flex-wrap gap-1.5 justify-end">
+    <button onclick="toggleTrafficLayer()" id="btn-traffic" class="glass-panel px-2.5 py-1.5 rounded-xl text-xs font-medium text-rose-600 hover:bg-white flex items-center gap-1 shadow">
+      <i class="fa-solid fa-arrows-turn-right"></i> ทิศทางจราจร
+    </button>
+    <button onclick="toggleLabels()" id="btn-labels" class="glass-panel px-2.5 py-1.5 rounded-xl text-xs font-medium text-sky-700 hover:bg-white flex items-center gap-1 shadow">
+      <i class="fa-solid fa-tag"></i> ป้ายชื่ออาคาร
+    </button>
+    <a href="https://maps.google.com/?q=13.3461,100.9765" target="_blank" rel="noopener" class="glass-panel px-2.5 py-1.5 rounded-xl text-xs font-medium text-emerald-700 hover:bg-white flex items-center gap-1 shadow">
+      <i class="fa-solid fa-map"></i> Google Maps
+    </a>
+  </div>
+
+  <!-- Bottom-Right View Controls -->
+  <div class="fixed right-3 bottom-4 z-20 flex flex-col gap-1.5">
+    <button onclick="resetCamera()" title="รีเซ็ตมุมมอง" class="glass-panel w-9 h-9 rounded-xl flex items-center justify-center text-rose-600 shadow">
+      <i class="fa-regular fa-compass"></i>
+    </button>
+    <button onclick="toggleViewAngle()" id="btn-3d" class="glass-panel w-9 h-9 rounded-xl font-bold text-xs text-slate-800 shadow">3D</button>
+  </div>
+
+  <!-- Legend Bar (Bottom Left when not in Admin) -->
+  <div id="legend-bar" class="fixed left-3 bottom-3 z-20 glass-panel rounded-xl px-3 py-1.5 text-[11px] flex items-center gap-3">
+    <span class="flex items-center gap-1"><span class="w-3 h-1 bg-red-500 inline-block rounded"></span> One-Way</span>
+    <span class="flex items-center gap-1"><span class="w-3 h-1 bg-emerald-500 inline-block rounded"></span> Two-Way</span>
+    <span class="flex items-center gap-1"><span class="text-amber-500">★</span> ทางขึ้นจอดรถ 7 ชั้น</span>
+  </div>
+
+  <!-- Building Floor Inspector Drawer -->
+  <div id="building-drawer" class="hidden fixed left-3 right-3 bottom-12 md:left-[415px] md:right-auto md:bottom-3 md:w-80 z-20 glass-panel rounded-2xl p-3.5 border-t-4 border-t-amber-500">
+    <div class="flex items-start justify-between">
+      <div>
+        <span class="text-[10px] font-semibold px-2 py-0.5 rounded bg-amber-100 text-amber-800">รายละเอียดอาคาร</span>
+        <h3 id="bld-title" class="font-bold text-sm text-slate-900 mt-1">ตึก 14 ชั้น</h3>
+      </div>
+      <button onclick="document.getElementById('building-drawer').classList.add('hidden')" class="text-slate-400 hover:text-slate-700"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <p id="bld-desc" class="text-[11px] text-slate-600 mt-1 mb-2"></p>
+    <div id="bld-clinics-inside" class="space-y-1 max-h-36 overflow-y-auto custom-scroll mb-2.5"></div>
+    <button id="bld-nav-btn" class="w-full py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold shadow">
+      <i class="fa-solid fa-diamond-turn-right mr-1"></i> นำทางไปที่นี่
+    </button>
+  </div>
+
+  <!-- Admin Login Modal -->
+  <div id="admin-login-modal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-sm w-full p-5 shadow-2xl">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="font-bold text-base text-slate-900"><i class="fa-solid fa-shield-halved text-amber-500 mr-1.5"></i> เข้าสู่โหมด Full Admin</h3>
+        <button onclick="toggleModal('admin-login-modal')" class="text-slate-400 hover:text-slate-700"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <p class="text-xs text-slate-600 mb-3">สำหรับเจ้าหน้าที่ดูแลระบบ เพื่อสร้าง/ย้ายอาคาร แก้ไขทางเดิน และอัปเดตตำแหน่งคลินิก (รหัสเริ่มต้น: <strong>cbh2026</strong>)</p>
+      <input id="admin-pin-input" type="password" placeholder="กรอกรหัสผ่านผู้ดูแลระบบ" onkeydown="if(event.key==='Enter') verifyAdminLogin()"
+        class="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm mb-3 focus:outline-none focus:border-sky-600" />
+      <button onclick="verifyAdminLogin()" class="w-full py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold">
+        เข้าสู่ระบบจัดการ 3D Studio
+      </button>
+    </div>
+  </div>
+
+  <!-- QR & Cloud Settings Modal -->
+  <div id="qr-modal" class="hidden fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-md w-full p-5 shadow-2xl">
+      <div class="flex items-center justify-between border-b pb-2.5">
+        <h3 class="font-bold text-sm text-slate-900"><i class="fa-solid fa-qrcode text-sky-600 mr-1.5"></i> ตั้งค่าจุดยืน QR Code & Google Sheets</h3>
+        <button onclick="toggleModal('qr-modal')" class="text-slate-400 hover:text-slate-700"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="mt-3 space-y-3 text-xs text-slate-600">
+        <p>จำลองการสแกน QR Code จากจุดต่างๆ ในโรงพยาบาล:</p>
+        <div id="qr-quick-grid" class="grid grid-cols-2 gap-1.5 max-h-40 overflow-y-auto custom-scroll"></div>
+        <div class="pt-2 border-t">
+          <label class="font-semibold text-slate-800 block mb-1">Google Apps Script URL (เชื่อมต่อ Cloud):</label>
+          <div class="flex gap-1.5">
+            <input id="gas-url-input" type="url" placeholder="https://script.google.com/macros/s/.../exec" class="flex-1 border rounded-lg px-2.5 py-1.5 text-xs" />
+            <button onclick="saveGasUrl()" class="bg-sky-600 text-white px-3 py-1.5 rounded-lg font-medium">บันทึก</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+// ============================================================================
+// 1. DEFAULT DATA (ตรงกับผัง 3 มิติ รพ.ชลบุรี ของพี่ที 100%)
+// ============================================================================
+const DEFAULT_BUILDINGS = [
+  { id: 'opd14', name: 'ตึก 14 ชั้น', fullName: 'ตึก 14 ชั้น (อาคารผู้ป่วยนอกและอำนวยการ)', x: -12, z: -12, w: 18, d: 22, h: 35, color: '#fde68a', roofColor: '#d97706', entryNode: 'opd14_entrance', desc: 'อาคาร 14 ชั้นสูงที่สุดใจกลางโรงพยาบาล (ยอดตึกสีส้มอิฐ) รวมห้องเจาะเลือด ห้องยา และคลินิกเฉพาะทาง' },
+  { id: 'chalayuwat', name: 'ชลายุวัฒน์ (ER ฉุกเฉิน)', fullName: 'อาคารชลายุวัฒน์ (อุบัติเหตุและฉุกเฉิน 7 ชั้น)', x: 24, z: 34, w: 22, d: 18, h: 19, color: '#93c5fd', roofColor: '#2563eb', entryNode: 'er_entrance', desc: 'ศูนย์อุบัติเหตุและฉุกเฉิน 24 ชั่วโมง มีสะพานลอยเชื่อมเข้าชั้น 2 จากถนนสุขุมวิท' },
+  { id: 'admin', name: 'ตึกอำนวยการ (หลังคาเขียว)', fullName: 'อาคารอำนวยการ (หลังคาเขียว)', x: -6, z: 34, w: 28, d: 11, h: 8, color: '#fef3c7', roofColor: '#15803d', entryNode: 'admin_front', desc: 'อาคารอำนวยการด้านหน้าวงเวียนพระบรมรูปฯ และศูนย์ตรวจสุขภาพประจำปี' },
+  { id: 'chalermrach', name: 'ตึกเฉลิมราชฯ', fullName: 'อาคารเฉลิมราชสมบัติ', x: -6, z: 16, w: 24, d: 14, h: 21, color: '#e2e8f0', roofColor: '#475569', entryNode: 'chalermrach_entrance', desc: 'อาคารหอผู้ป่วยใน ห้องพิเศษ VIP และห้องประชุมใหญ่' },
+  { id: 'opd_old', name: 'ตึก OPD (ผู้ป่วยนอก)', fullName: 'อาคารผู้ป่วยนอก (OPD หลังเดิม)', x: 18, z: 17, w: 18, d: 12, h: 12, color: '#e0f2fe', roofColor: '#0284c7', entryNode: 'opd_old_entrance', desc: 'อาคารผู้ป่วยนอกเดิม เชื่อมต่อระหว่างตึกเฉลิมราชฯ และตึกชลายุวัฒน์' },
+  { id: 'excellence', name: 'ศูนย์ความเป็นเลิศ', fullName: 'อาคารศูนย์ความเป็นเลิศทางการแพทย์', x: 24, z: -14, w: 18, d: 20, h: 27, color: '#fed7aa', roofColor: '#9a3412', entryNode: 'excellence_entrance', desc: 'คลินิกเฉพาะทาง ทันตกรรม ชั้น 7 หอผู้ป่วยพิเศษ และศูนย์วิจัย' },
+  { id: 'pathology', name: 'อาคารเวชศาสตร์/พยาธิ 7 ชั้น', fullName: 'อาคารเวชศาสตร์และพยาธิวิทยา 7 ชั้น', x: 5, z: -14, w: 14, d: 18, h: 18, color: '#bae6fd', roofColor: '#0369a1', entryNode: 'opd14_entrance', desc: 'ห้องปฏิบัติการพยาธิวิทยาและธนาคารเลือด' },
+  { id: 'parking7', name: 'อาคารจอดรถ 7 ชั้น ★', fullName: 'อาคารจอดรถ 7 ชั้น', x: -35, z: -12, w: 18, d: 22, h: 18, color: '#e9d5ff', roofColor: '#7e22ce', entryNode: 'parking7_entrance', desc: 'อาคารจอดรถหลักสำหรับผู้มารับบริการ ทางขึ้นจุดดาว ★' },
+  { id: 'foundation', name: 'สำนักงานมูลนิธิ รพ.ชลบุรี', fullName: 'สำนักงานมูลนิธิโรงพยาบาลชลบุรี', x: -57, z: -12, w: 18, d: 22, h: 9, color: '#f3e8ff', roofColor: '#6b21a8', entryNode: 'parking7_entrance', desc: 'สำนักงานมูลนิธิและจุดรับบริจาค' },
+  { id: 'pharmacy_fnd', name: 'ร้านยามูลนิธิฯ', fullName: 'ร้านยามูลนิธิโรงพยาบาลชลบุรี', x: -35, z: -36, w: 18, d: 15, h: 8, color: '#a7f3d0', roofColor: '#047857', entryNode: 'back_parking', desc: 'จำหน่ายยาและเวชภัณฑ์มูลนิธิโรงพยาบาลชลบุรี' },
+  { id: 'kuman', name: 'ตึกกุมาร (เด็ก)', fullName: 'อาคารกุมารเวชกรรม', x: 10, z: 5, w: 13, d: 11, h: 14, color: '#fef08a', roofColor: '#ca8a04', entryNode: 'kuman_entrance', desc: 'คลินิกตรวจโรคเด็กและหอผู้ป่วยกุมารเวชกรรม' },
+  { id: 'chalarak', name: 'ตึกชลารักษ์ (สูติฯ)', fullName: 'อาคารชลารักษ์ (สูติ-นรีเวชกรรม)', x: 27, z: 5, w: 14, d: 13, h: 14, color: '#fed7aa', roofColor: '#ea580c', entryNode: 'kuman_entrance', desc: 'คลินิกฝากครรภ์ ห้องคลอด และหอผู้ป่วยหลังคลอด' },
+  { id: 'chalatit', name: 'ตึกชลาทิศ', fullName: 'อาคารชลาทิศ', x: -34, z: 12, w: 16, d: 14, h: 13, color: '#d1fae5', roofColor: '#065f46', entryNode: 'chalatit_entrance', desc: 'หอผู้ป่วยในศัลยกรรมชาย-หญิง (ชลาทิศ 1-4)' },
+  { id: 'chalathorn', name: 'ตึกชลาทร (โซลาร์เซลล์)', fullName: 'อาคารชลาทร (โซลาร์เซลล์)', x: -34, z: 32, w: 12, d: 22, h: 9, color: '#cbd5e1', roofColor: '#1e3a8a', entryNode: 'admin_front', desc: 'หอผู้ป่วยในชลาทรบน-ล่าง' },
+  { id: 'bcn', name: 'วิทยาลัยพยาบาลฯ ชลบุรี', fullName: 'วิทยาลัยพยาบาลบรมราชชนนี ชลบุรี', x: 52, z: 16, w: 16, d: 28, h: 13, color: '#e2e8f0', roofColor: '#0f766e', entryNode: 'east_road_mid', desc: 'วิทยาลัยพยาบาลบรมราชชนนี ชลบุรี (ฝั่งตะวันออก)' }
+];
+
+const DEFAULT_NODES = {
+  gate_main:            { x: -6,  z: 49, label: 'ประตูหน้าโรงพยาบาล (ถ.สุขุมวิท)' },
+  skywalk_er:           { x: 24,  z: 49, label: 'สะพานลอยหน้าตึกชลายุวัฒน์ (ER)' },
+  er_entrance:          { x: 24,  z: 44, label: 'ประตูห้องฉุกเฉิน ชลายุวัฒน์' },
+  east_gate_exit:       { x: 38,  z: 49, label: 'หัวมุมถนนฝั่งตะวันออก' },
+  admin_front:          { x: -6,  z: 41, label: 'วงเวียนหน้าตึกอำนวยการ' },
+  chalermrach_entrance: { x: -6,  z: 25, label: 'โถงตึกเฉลิมราชฯ' },
+  opd_old_entrance:     { x: 18,  z: 25, label: 'ทางเข้าตึก OPD เดิม' },
+  east_road_south:      { x: 38,  z: 24, label: 'ถนนฝั่งตะวันออก (ข้าง ER)' },
+  kuman_entrance:       { x: 18,  z: 12, label: 'หน้าตึกกุมาร / ตึกชลารักษ์' },
+  east_road_mid:        { x: 38,  z: 2,  label: 'แยกถนนตะวันออก (ข้างตึกชลารักษ์)' },
+  excellence_entrance:  { x: 24,  z: -2, label: 'ทางเข้าศูนย์ความเป็นเลิศ' },
+  east_road_north:      { x: 38,  z: -26,label: 'หัวมุมหลังศูนย์ความเป็นเลิศ' },
+  central_avenue:       { x: 2,   z: -26,label: 'ถนนแกนกลางหลังตึก 14 ชั้น' },
+  opd14_entrance:       { x: -12, z: -26,label: 'โถงทางเข้าหลัก ตึก 14 ชั้น' },
+  west_junction:        { x: -24, z: -26,label: 'แยกอาคารจอดรถ 7 ชั้น' },
+  back_parking:         { x: -35, z: -28,label: 'ลานจอดรถยนต์ & ร้านยามูลนิธิฯ' },
+  parking7_entrance:    { x: -25, z: -12,label: 'ทางขึ้นอาคารจอดรถ 7 ชั้น ★' },
+  west_road_mid:        { x: -45, z: 2,  label: 'แยกสำนักงานมูลนิธิ / ตึกชลาทิศ' },
+  chalatit_entrance:    { x: -34, z: 3,  label: 'ทางเข้าตึกชลาทิศ' }
+};
+
+const DEFAULT_EDGES = [
+  { id: 'e1', from: 'gate_main', to: 'admin_front', dist: 45, type: 'oneway', closed: false, hint: 'เดิน/ขับตรงเข้าประตูหลักสู่หน้าตึกอำนวยการ' },
+  { id: 'e2', from: 'admin_front', to: 'chalermrach_entrance', dist: 75, type: 'walk', closed: false, hint: 'เดินผ่านทางเชื่อมมีหลังคาคลุมไปตึกเฉลิมราชฯ' },
+  { id: 'e3', from: 'chalermrach_entrance', to: 'opd14_entrance', dist: 158, type: 'walk', closed: false, hint: 'เดินตามทางเชื่อมอาคารจากตึกเฉลิมราชฯ สู่ตึก 14 ชั้น' },
+  { id: 'e4', from: 'admin_front', to: 'skywalk_er', dist: 110, type: 'oneway', closed: false, hint: 'เลี้ยวขวาตามถนน One-Way ผ่านหน้าตึกชลายุวัฒน์' },
+  { id: 'e5', from: 'skywalk_er', to: 'er_entrance', dist: 25, type: 'walk', closed: false, hint: 'เข้าสู่ห้องฉุกเฉิน อาคารชลายุวัฒน์' },
+  { id: 'e6', from: 'skywalk_er', to: 'east_gate_exit', dist: 55, type: 'oneway', closed: false, hint: 'ตรงไปหัวมุมถนนฝั่งตะวันออก' },
+  { id: 'e7', from: 'east_gate_exit', to: 'east_road_south', dist: 105, type: 'oneway', closed: false, hint: 'เลี้ยวซ้ายขึ้นไปตามถนน One-Way ฝั่งตะวันออก' },
+  { id: 'e8', from: 'east_road_south', to: 'east_road_mid', dist: 90, type: 'oneway', closed: false, hint: 'ตรงขึ้นไปผ่านด้านข้างตึกชลารักษ์' },
+  { id: 'e9', from: 'east_road_mid', to: 'kuman_entrance', dist: 80, type: 'oneway', closed: false, hint: 'เลี้ยวซ้ายเข้าซอยตึกกุมารและตึกชลารักษ์' },
+  { id: 'e10', from: 'east_road_mid', to: 'east_road_north', dist: 115, type: 'oneway', closed: false, hint: 'ตรงขึ้นไปสุดมุมศูนย์ความเป็นเลิศ' },
+  { id: 'e11', from: 'east_road_north', to: 'central_avenue', dist: 145, type: 'oneway', closed: false, hint: 'เลี้ยวซ้ายเข้าถนนด้านหลังศูนย์ความเป็นเลิศ' },
+  { id: 'e12', from: 'central_avenue', to: 'excellence_entrance', dist: 90, type: 'walk', closed: false, hint: 'เดินเข้าประตูอาคารศูนย์ความเป็นเลิศ' },
+  { id: 'e13', from: 'central_avenue', to: 'opd14_entrance', dist: 60, type: 'twoway', closed: false, hint: 'ตรงไปตามถนน Two-Way (สีเขียว) หน้าตึก 14 ชั้น' },
+  { id: 'e14', from: 'opd14_entrance', to: 'west_junction', dist: 50, type: 'twoway', closed: false, hint: 'ตรงผ่านหน้าตึก 14 ชั้นไปทางอาคารจอดรถ 7 ชั้น' },
+  { id: 'e15', from: 'west_junction', to: 'back_parking', dist: 45, type: 'twoway', closed: false, hint: 'เลี้ยวขวาไปร้านยามูลนิธิและลานจอดรถด้านหลัง' },
+  { id: 'e16', from: 'west_junction', to: 'parking7_entrance', dist: 60, type: 'oneway', closed: false, hint: 'เลี้ยวซ้ายเข้าทางขึ้นอาคารจอดรถ 7 ชั้น ★' },
+  { id: 'e17', from: 'parking7_entrance', to: 'west_road_mid', dist: 75, type: 'oneway', closed: false, hint: 'ตรงผ่านหน้าสำนักงานมูลนิธิ รพ.ชลบุรี' },
+  { id: 'e18', from: 'west_road_mid', to: 'chalatit_entrance', dist: 50, type: 'oneway', closed: false, hint: 'เลี้ยวซ้ายเข้าสู่อาคารชลาทิศ' },
+  { id: 'e19', from: 'chalermrach_entrance', to: 'opd_old_entrance', dist: 85, type: 'walk', closed: false, hint: 'เดินเชื่อมไปตึก OPD หลังเดิม' }
+];
+
+const DEFAULT_CLINICS = [
+  { id: 'c01', name: 'ห้องบัตร / เวชระเบียนผู้ป่วยนอก', building_id: 'opd14', floor: 'ชั้น 1', open_hours: '06:30 - 16:00 น.', phone: '1101', keywords: 'ทำบัตร ประวัติ สิทธิ ยื่นใบส่งตัว' },
+  { id: 'c02', name: 'ห้องเจาะเลือดและเก็บสิ่งส่งตรวจ (Lab)', building_id: 'opd14', floor: 'ชั้น 1', open_hours: '06:00 - 15:30 น.', phone: '1205', keywords: 'เจาะเลือด แล็บ ตรวจเลือด ปัสสาวะ' },
+  { id: 'c03', name: 'ห้องจ่ายยาผู้ป่วยนอก (Pharmacy)', building_id: 'opd14', floor: 'ชั้น 1', open_hours: '07:30 - 16:30 น.', phone: '1115', keywords: 'ห้องยา รับยา เภสัช' },
+  { id: 'c04', name: 'ห้องฉุกเฉินและอุบัติเหตุ (ER)', building_id: 'chalayuwat', floor: 'ชั้น 1', open_hours: '24 ชั่วโมง', phone: '1669', keywords: 'ฉุกเฉิน อุบัติเหตุ รถพยาบาล er' },
+  { id: 'c05', name: 'คลินิกฝากครรภ์ (ANC) และสูติ-นรีเวช', building_id: 'chalarak', floor: 'ชั้น 1', open_hours: '08:00 - 16:00 น.', phone: '1302', keywords: 'ฝากท้อง สูติ นรีเวช คลอด' },
+  { id: 'c06', name: 'คลินิกกุมารเวชกรรม (ตรวจโรคเด็ก)', building_id: 'kuman', floor: 'ชั้น 1', open_hours: '08:00 - 16:00 น.', phone: '1401', keywords: 'ตึกเด็ก หมอเด็ก วัคซีน' },
+  { id: 'c07', name: 'ศูนย์ตรวจสุขภาพประจำปี', building_id: 'admin', floor: 'ชั้น 1', open_hours: '08:00 - 15:00 น.', phone: '1012', keywords: 'ตรวจสุขภาพ ใบรับรองแพทย์' },
+  { id: 'c08', name: 'คลินิกทันตกรรมเฉพาะทาง', building_id: 'excellence', floor: 'ชั้น 7', open_hours: '08:00 - 16:00 น.', phone: '1701', keywords: 'ทำฟัน ถอนฟัน ทันตกรรม' },
+  { id: 'c09', name: 'หอผู้ป่วยศัลยกรรมชาย ชลาทิศ 1', building_id: 'chalatit', floor: 'ชั้น 1', open_hours: '11:00 - 20:00 น.', phone: '1501', keywords: 'ชลาทิศ ศัลยกรรมชาย' }
+];
+
+// Active State (Loaded from LocalStorage or Cloud)
+let BUILDINGS = JSON.parse(localStorage.getItem('cbhgo_buildings')) || structuredClone(DEFAULT_BUILDINGS);
+let NODES = JSON.parse(localStorage.getItem('cbhgo_nodes')) || structuredClone(DEFAULT_NODES);
+let EDGES = JSON.parse(localStorage.getItem('cbhgo_edges')) || structuredClone(DEFAULT_EDGES);
+let CLINICS = JSON.parse(localStorage.getItem('cbhgo_clinics')) || structuredClone(DEFAULT_CLINICS);
+let GAS_API_URL = localStorage.getItem('cbh_go_gas_url') || '';
+
+// ============================================================================
+// 2. THREE.JS 3D SCENE & DYNAMIC REBUILDERS
+// ============================================================================
+let scene, camera, renderer, controls, raycaster, mouse, groundPlane;
+let buildingsGroup = new THREE.Group();
+let edgesGroup = new THREE.Group();
+let routeGroup = new THREE.Group();
+let buildingMeshes = [];
+let labelElements = [];
+let nodeElements = [];
+
+let isAdminMode = false;
+let adminToolMode = null; // 'add_building' | 'add_node' | 'connect_edge'
+let connectSourceNode = null;
+let selectedBuildingId = null;
+let currentMode = 'walk';
+let activeTargetNode = 'opd14_entrance';
+let showTraffic = true;
+let showLabels = true;
+let isTopDown = false;
+
+function init3D() {
+  const container = document.getElementById('canvas-container');
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xdbeafe);
+  scene.fog = new THREE.FogExp2(0xdbeafe, 0.002);
+
+  camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 1, 800);
+  camera.position.set(0, 92, 118);
+
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  container.appendChild(renderer.domElement);
+
+  controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.06;
+  controls.maxPolarAngle = Math.PI / 2.15;
+  controls.minDistance = 25;
+  controls.maxDistance = 240;
+  controls.target.set(0, 0, 4);
+
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x94a3b8, 0.88));
+  const dirLight = new THREE.DirectionalLight(0xfffbeb, 0.85);
+  dirLight.position.set(60, 120, 75);
+  dirLight.castShadow = true;
+  dirLight.shadow.mapSize.width = 2048;
+  dirLight.shadow.mapSize.height = 2048;
+  const d = 100;
+  dirLight.shadow.camera.left = -d; dirLight.shadow.camera.right = d;
+  dirLight.shadow.camera.top = d; dirLight.shadow.camera.bottom = -d;
+  scene.add(dirLight);
+
+  buildStaticEnvironment();
+  scene.add(buildingsGroup, edgesGroup, routeGroup);
+
+  rebuildBuildings3D();
+  rebuildEdges3D();
+  rebuildNodeBadges();
+
+  raycaster = new THREE.Raycaster();
+  mouse = new THREE.Vector2();
+
+  window.addEventListener('resize', onWindowResize);
+  renderer.domElement.addEventListener('pointerdown', onCanvasClick);
+
+  animate();
+}
+
+function buildStaticEnvironment() {
+  groundPlane = new THREE.Mesh(
+    new THREE.PlaneGeometry(340, 300),
+    new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.9 })
+  );
+  groundPlane.rotation.x = -Math.PI / 2;
+  groundPlane.receiveShadow = true;
+  scene.add(groundPlane);
+
+  const campusPad = new THREE.Mesh(
+    new THREE.BoxGeometry(156, 0.4, 108),
+    new THREE.MeshStandardMaterial({ color: 0xf1f5f9, roughness: 0.85 })
+  );
+  campusPad.position.set(-8, 0.2, -4);
+  campusPad.receiveShadow = true;
+  scene.add(campusPad);
+
+  // Sukhumvit Road
+  const sukhumvit = new THREE.Mesh(
+    new THREE.BoxGeometry(340, 0.5, 16),
+    new THREE.MeshStandardMaterial({ color: 0x334155 })
+  );
+  sukhumvit.position.set(0, 0.25, 58);
+  scene.add(sukhumvit);
+
+  for (let x = -150; x <= 150; x += 12) {
+    const dash = new THREE.Mesh(new THREE.PlaneGeometry(6, 0.5), new THREE.MeshBasicMaterial({ color: 0xfacc15 }));
+    dash.rotation.x = -Math.PI / 2;
+    dash.position.set(x, 0.52, 58);
+    scene.add(dash);
+  }
+
+  // Skywalk into ER 2nd Floor
+  const skyMat = new THREE.MeshStandardMaterial({ color: 0x10b981 });
+  const bridge = new THREE.Mesh(new THREE.BoxGeometry(4, 1.5, 22), skyMat);
+  bridge.position.set(24, 7.5, 53);
+  const pillar = new THREE.Mesh(new THREE.BoxGeometry(2.5, 7.5, 2.5), skyMat);
+  pillar.position.set(24, 3.75, 63);
+  scene.add(bridge, pillar);
+
+  // Front Roundabout Garden
+  const garden = new THREE.Mesh(new THREE.CylinderGeometry(8.5, 9, 0.6, 32), new THREE.MeshStandardMaterial({ color: 0x22c55e }));
+  garden.position.set(-6, 0.5, 43);
+  const statue = new THREE.Mesh(new THREE.BoxGeometry(2, 4, 2), new THREE.MeshStandardMaterial({ color: 0xd97706 }));
+  statue.position.set(-6, 2.3, 43);
+  scene.add(garden, statue);
+
+  // Back Parking Lot
+  const backLot = new THREE.Mesh(new THREE.BoxGeometry(36, 0.45, 24), new THREE.MeshStandardMaterial({ color: 0x64748b }));
+  backLot.position.set(-62, 0.25, -36);
+  scene.add(backLot);
+}
+
+function rebuildBuildings3D() {
+  while (buildingsGroup.children.length) buildingsGroup.remove(buildingsGroup.children[0]);
+  buildingMeshes = [];
+  const labelsContainer = document.getElementById('labels-layer');
+  labelsContainer.innerHTML = '';
+  labelElements = [];
+
+  BUILDINGS.forEach(b => {
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(b.w, b.h, b.d),
+      new THREE.MeshStandardMaterial({ color: b.color, roughness: 0.55 })
+    );
+    mesh.position.set(b.x, b.h / 2 + 0.4, b.z);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.userData = { building: b };
+    buildingsGroup.add(mesh);
+    buildingMeshes.push(mesh);
+
+    const roof = new THREE.Mesh(
+      new THREE.BoxGeometry(b.w + 0.6, 1.1, b.d + 0.6),
+      new THREE.MeshStandardMaterial({ color: b.roofColor, roughness: 0.4 })
+    );
+    roof.position.set(b.x, b.h + 0.9, b.z);
+    buildingsGroup.add(roof);
+
+    // Floating Label
+    const el = document.createElement('div');
+    el.className = 'building-label';
+    el.innerHTML = `
+      <div class="px-2 py-0.5 rounded-full bg-white/95 text-slate-900 text-[10px] font-semibold shadow border border-slate-300 whitespace-nowrap flex items-center gap-1">
+        <span class="w-1.5 h-1.5 rounded-full" style="background:${b.roofColor}"></span>
+        ${b.name}
+      </div>`;
+    el.onclick = () => {
+      if (isAdminMode) selectBuildingForEdit(b.id);
+      else openBuildingDrawer(b);
+    };
+    labelsContainer.appendChild(el);
+    labelElements.push({ el, pos: new THREE.Vector3(b.x, b.h + 2.4, b.z) });
+  });
+}
+
+function rebuildEdges3D() {
+  while (edgesGroup.children.length) edgesGroup.remove(edgesGroup.children[0]);
+
+  EDGES.forEach(e => {
+    const p1 = NODES[e.from], p2 = NODES[e.to];
+    if (!p1 || !p2) return;
+    const start = new THREE.Vector3(p1.x, 0.58, p1.z);
+    const end = new THREE.Vector3(p2.x, 0.58, p2.z);
+    const dir = new THREE.Vector3().subVectors(end, start);
+    const len = dir.length();
+    if (len < 0.1) return;
+    dir.normalize();
+
+    let color = 0x38bdf8;
+    if (e.closed) color = 0x94a3b8;
+    else if (e.type === 'oneway') color = 0xef4444;
+    else if (e.type === 'twoway') color = 0x10b981;
+    else if (e.type === 'wheelchair') color = 0xa855f7;
+
+    const strip = new THREE.Mesh(
+      new THREE.PlaneGeometry(e.type === 'walk' ? 0.7 : 1.15, len),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: e.closed ? 0.45 : 0.9 })
+    );
+    strip.rotation.x = -Math.PI / 2;
+    strip.position.copy(start).addScaledVector(dir, len / 2);
+    strip.rotation.z = Math.atan2(dir.x, dir.z);
+    edgesGroup.add(strip);
+
+    if (e.type === 'oneway' || e.type === 'twoway') {
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(1.2, 2.5, 3), new THREE.MeshBasicMaterial({ color }));
+      cone.position.copy(start).addScaledVector(dir, len * 0.65).setY(0.75);
+      cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+      edgesGroup.add(cone);
+    }
+  });
+}
+
+function rebuildNodeBadges() {
+  const container = document.getElementById('nodes-layer');
+  container.innerHTML = '';
+  nodeElements = [];
+  if (!isAdminMode) return;
+
+  Object.entries(NODES).forEach(([id, n]) => {
+    const el = document.createElement('div');
+    el.className = 'node-badge';
+    el.innerHTML = `
+      <div class="w-4 h-4 rounded-full bg-amber-400 border-2 border-slate-900 shadow flex items-center justify-center text-[8px] font-bold text-slate-900" title="${n.label} (${id})">
+        •
+      </div>`;
+    el.onclick = (ev) => {
+      ev.stopPropagation();
+      handleNodeClickInAdmin(id);
+    };
+    container.appendChild(el);
+    nodeElements.push({ el, pos: new THREE.Vector3(n.x, 1.2, n.z) });
+  });
+}
+
+// ============================================================================
+// 3. DIJKSTRA PATHFINDING ENGINE
+// ============================================================================
+function computeShortestPath(startId, endId, mode) {
+  if (!NODES[startId] || !NODES[endId]) return null;
+  if (startId === endId) return { nodes: [startId], dist: 0, steps: ['คุณอยู่ที่จุดหมายปลายทางแล้ว'] };
+
+  const allowCar = (mode === 'car');
+  const dist = {}, prev = {}, edgeUsed = {}, visited = new Set();
+  Object.keys(NODES).forEach(k => dist[k] = Infinity);
+  dist[startId] = 0;
+
+  while (visited.size < Object.keys(NODES).length) {
+    let u = null, best = Infinity;
+    for (const k of Object.keys(NODES)) {
+      if (!visited.has(k) && dist[k] < best) { best = dist[k]; u = k; }
+    }
+    if (!u || u === endId) break;
+    visited.add(u);
+
+    for (const e of EDGES) {
+      if (e.closed) continue;
+      const isRoad = (e.type === 'oneway' || e.type === 'twoway');
+      if (allowCar && !isRoad) continue;
+
+      if (e.from === u && dist[u] + e.dist < dist[e.to]) {
+        dist[e.to] = dist[u] + e.dist;
+        prev[e.to] = u;
+        edgeUsed[e.to] = e.hint || `ไปยัง ${NODES[e.to].label}`;
+      } else if (!allowCar && e.to === u && dist[u] + e.dist < dist[e.from]) {
+        dist[e.from] = dist[u] + e.dist;
+        prev[e.from] = u;
+        edgeUsed[e.from] = `เดินต่อไปยัง ${NODES[e.from].label}`;
+      }
+    }
+  }
+
+  if (dist[endId] === Infinity) return null;
+  const path = [], steps = [];
+  let curr = endId;
+  while (curr) {
+    path.unshift(curr);
+    if (edgeUsed[curr]) steps.unshift(edgeUsed[curr]);
+    curr = prev[curr];
+  }
+  return { nodes: path, dist: Math.round(dist[endId]), steps };
+}
+
+function drawRoute3D(nodeIds) {
+  while (routeGroup.children.length) routeGroup.remove(routeGroup.children[0]);
+  if (!nodeIds || nodeIds.length < 2) return;
+
+  const points = nodeIds.map(id => new THREE.Vector3(NODES[id].x, 1.4, NODES[id].z));
+  const curve = new THREE.CatmullRomCurve3(points, false, 'catmullrom', 0.12);
+  const routeColor = (currentMode === 'car') ? 0xf59e0b : (currentMode === 'wheelchair' ? 0x10b981 : 0x0284c7);
+  const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 64, 0.9, 8, false), new THREE.MeshBasicMaterial({ color: routeColor }));
+  routeGroup.add(tube);
+
+  const startDot = new THREE.Mesh(new THREE.SphereGeometry(1.7, 16, 16), new THREE.MeshBasicMaterial({ color: 0x10b981 }));
+  startDot.position.copy(points[0]).setY(2.2);
+  const endPin = new THREE.Mesh(new THREE.SphereGeometry(2.2, 16, 16), new THREE.MeshBasicMaterial({ color: 0xe11d48 }));
+  endPin.position.copy(points[points.length - 1]).setY(5.5);
+  routeGroup.add(startDot, endPin);
+}
+
+// ============================================================================
+// 4. USER UI & DROPDOWNS SYNC
+// ============================================================================
+function syncAllDropdowns() {
+  const startSel = document.getElementById('start-select');
+  const prevStart = startSel.value || 'gate_main';
+  startSel.innerHTML = Object.entries(NODES).map(([id, n]) =>
+    `<option value="${id}">${n.label}</option>`
+  ).join('');
+  if (NODES[prevStart]) startSel.value = prevStart;
+
+  const destSel = document.getElementById('dest-select');
+  const prevDest = destSel.value || 'opd14';
+  destSel.innerHTML = BUILDINGS.map(b =>
+    `<option value="${b.id}">${b.fullName}</option>`
+  ).join('');
+  if (BUILDINGS.some(b => b.id === prevDest)) destSel.value = prevDest;
+
+  // QR quick buttons
+  const qrGrid = document.getElementById('qr-quick-grid');
+  qrGrid.innerHTML = Object.entries(NODES).slice(0, 8).map(([id, n]) => `
+    <button onclick="simulateQr('${id}')" class="p-2 rounded-xl border hover:border-sky-500 hover:bg-sky-50 text-left">
+      <div class="font-semibold text-slate-800 truncate">${n.label}</div>
+      <div class="text-[10px] text-slate-400">?start=${id}</div>
+    </button>
+  `).join('');
+}
+
+function onDestDropdownChange() {
+  const bId = document.getElementById('dest-select').value;
+  const b = BUILDINGS.find(x => x.id === bId);
+  if (b) {
+    activeTargetNode = b.entryNode;
+    recalculateRoute();
+  }
+}
+
+function quickSelectClinic(cId) {
+  const c = CLINICS.find(x => x.id === cId);
+  if (!c) return;
+  const b = BUILDINGS.find(x => x.id === c.building_id);
+  if (b) {
+    document.getElementById('dest-select').value = b.id;
+    activeTargetNode = b.entryNode;
+    recalculateRoute();
+  }
+}
+
+function quickSelectBuilding(bId) {
+  const b = BUILDINGS.find(x => x.id === bId);
+  if (b) {
+    document.getElementById('dest-select').value = b.id;
+    activeTargetNode = b.entryNode;
+    recalculateRoute();
+  }
+}
+
+function handleSearch(q) {
+  const box = document.getElementById('search-results');
+  const clearBtn = document.getElementById('clear-btn');
+  const term = q.trim().toLowerCase();
+  clearBtn.classList.toggle('hidden', !term);
+  if (!term) { box.classList.add('hidden'); return; }
+
+  const mClinics = CLINICS.filter(c =>
+    c.name.toLowerCase().includes(term) || (c.keywords && c.keywords.toLowerCase().includes(term))
+  );
+  const mBlds = BUILDINGS.filter(b =>
+    b.name.toLowerCase().includes(term) || b.fullName.toLowerCase().includes(term)
+  );
+
+  let html = '';
+  mClinics.forEach(c => {
+    const b = BUILDINGS.find(x => x.id === c.building_id);
+    html += `
+      <button onclick="quickSelectClinic('${c.id}'); document.getElementById('search-results').classList.add('hidden');" class="w-full text-left px-3 py-2 hover:bg-sky-50 flex items-start gap-2">
+        <i class="fa-solid fa-stethoscope text-sky-600 mt-1 text-xs"></i>
+        <div>
+          <div class="font-semibold text-xs text-slate-900">${c.name}</div>
+          <div class="text-[10px] text-slate-500">${b ? b.name : ''} • ${c.floor} • ${c.open_hours}</div>
+        </div>
+      </button>`;
+  });
+  mBlds.forEach(b => {
+    html += `
+      <button onclick="quickSelectBuilding('${b.id}'); document.getElementById('search-results').classList.add('hidden');" class="w-full text-left px-3 py-2 hover:bg-amber-50 flex items-start gap-2">
+        <i class="fa-solid fa-building text-amber-600 mt-1 text-xs"></i>
+        <div>
+          <div class="font-semibold text-xs text-slate-900">${b.fullName}</div>
+          <div class="text-[10px] text-slate-500">นำทางไปที่อาคารนี้</div>
+        </div>
+      </button>`;
+  });
+  box.innerHTML = html || `<div class="p-3 text-xs text-slate-400 text-center">ไม่พบข้อมูลที่ค้นหา</div>`;
+  box.classList.remove('hidden');
+}
+
+function clearSearch() {
+  document.getElementById('search-input').value = '';
+  document.getElementById('search-results').classList.add('hidden');
+  document.getElementById('clear-btn').classList.add('hidden');
+}
+
+function setMode(m) {
+  currentMode = m;
+  document.querySelectorAll('.mode-btn').forEach(b => b.className = 'mode-btn py-1.5 px-2 rounded-lg text-slate-600 flex items-center justify-center gap-1.5');
+  document.getElementById(`mode-${m}`).className = 'mode-btn py-1.5 px-2 rounded-lg bg-white text-sky-700 shadow-sm flex items-center justify-center gap-1.5';
+  recalculateRoute();
+}
+
+function recalculateRoute() {
+  const startId = document.getElementById('start-select').value;
+  const res = computeShortestPath(startId, activeTargetNode, currentMode);
+  const card = document.getElementById('route-card');
+  card.classList.remove('hidden');
+
+  if (!res) {
+    document.getElementById('route-time').textContent = 'ไม่พบเส้นทาง';
+    document.getElementById('route-dist').textContent = '';
+    document.getElementById('route-steps').innerHTML = `<div class="text-rose-600">โหมดขับรถยนต์ไม่สามารถเข้าจุดนี้ได้โดยตรง แนะนำจอดที่อาคารจอดรถ 7 ชั้นแล้วเปลี่ยนเป็นโหมดเดินเท้า</div>`;
+    drawRoute3D([]);
+    return;
+  }
+
+  const speed = currentMode === 'car' ? 240 : (currentMode === 'wheelchair' ? 45 : 68);
+  const mins = Math.max(1, Math.round(res.dist / speed));
+  document.getElementById('route-time').textContent = `${mins} นาที`;
+  document.getElementById('route-dist').textContent = `(${res.dist} เมตร)`;
+  document.getElementById('step-count').textContent = res.steps.length;
+  document.getElementById('route-steps').innerHTML = res.steps.map((s, i) => `
+    <div class="flex items-start gap-2 py-1 border-b border-slate-100 last:border-0">
+      <span class="w-4 h-4 rounded-full bg-sky-100 text-sky-700 font-bold text-[10px] flex items-center justify-center shrink-0">${i + 1}</span>
+      <span>${s}</span>
+    </div>
+  `).join('');
+
+  drawRoute3D(res.nodes);
+}
+
+function openBuildingDrawer(b) {
+  const drawer = document.getElementById('building-drawer');
+  drawer.classList.remove('hidden');
+  document.getElementById('bld-title').textContent = b.fullName;
+  document.getElementById('bld-desc').textContent = b.desc;
+
+  const inside = CLINICS.filter(c => c.building_id === b.id);
+  document.getElementById('bld-clinics-inside').innerHTML = inside.length
+    ? inside.map(c => `<div class="px-2.5 py-1.5 rounded-lg bg-slate-50 border text-[11px]"><strong>${c.floor}:</strong> ${c.name} <span class="text-slate-400">(${c.open_hours})</span></div>`).join('')
+    : `<div class="text-[11px] text-slate-400">ยังไม่มีรายการคลินิกย่อยระบุในอาคารนี้</div>`;
+
+  document.getElementById('bld-nav-btn').onclick = () => {
+    quickSelectBuilding(b.id);
+    drawer.classList.add('hidden');
+  };
+}
+
+// ============================================================================
+// 5. FULL VISUAL 3D ADMIN STUDIO
+// ============================================================================
+function openAdminLogin() {
+  toggleModal('admin-login-modal');
+  setTimeout(() => document.getElementById('admin-pin-input').focus(), 100);
+}
+
+function verifyAdminLogin() {
+  const pin = document.getElementById('admin-pin-input').value;
+  if (pin === 'cbh2026') {
+    toggleModal('admin-login-modal');
+    enterAdminMode();
+  } else {
+    alert('รหัสผ่านไม่ถูกต้อง (รหัสเริ่มต้นคือ cbh2026)');
+  }
+}
+
+function enterAdminMode() {
+  isAdminMode = true;
+  document.getElementById('admin-banner').classList.remove('hidden');
+  document.getElementById('admin-panel').classList.remove('hidden');
+  document.getElementById('user-panel').classList.add('hidden');
+  document.getElementById('legend-bar').classList.add('hidden');
+  document.getElementById('building-drawer').classList.add('hidden');
+  rebuildNodeBadges();
+  refreshAdminLists();
+  if (BUILDINGS.length > 0) selectBuildingForEdit(BUILDINGS[0].id);
+}
+
+function exitAdminMode() {
+  isAdminMode = false;
+  adminToolMode = null;
+  document.getElementById('admin-banner').classList.add('hidden');
+  document.getElementById('admin-panel').classList.add('hidden');
+  document.getElementById('user-panel').classList.remove('hidden');
+  document.getElementById('legend-bar').classList.remove('hidden');
+  rebuildNodeBadges();
+  syncAllDropdowns();
+  recalculateRoute();
+}
+
+function switchAdminTab(tab) {
+  ['buildings', 'paths', 'clinics'].forEach(t => {
+    document.getElementById(`pane-${t}`).classList.toggle('hidden', t !== tab);
+    document.getElementById(`tab-${t}`).className = (t === tab)
+      ? 'admin-tab py-2.5 bg-amber-500 text-slate-950 flex items-center justify-center gap-1.5'
+      : 'admin-tab py-2.5 text-slate-300 hover:text-white flex items-center justify-center gap-1.5';
+  });
+  refreshAdminLists();
+}
+
+function refreshAdminLists() {
+  // 1. Buildings List & Node Selects
+  document.getElementById('bld-count').textContent = BUILDINGS.length;
+  const nodeOpts = Object.entries(NODES).map(([id, n]) => `<option value="${id}">${n.label} (${id})</option>`).join('');
+  document.getElementById('edit-bld-node').innerHTML = nodeOpts;
+  document.getElementById('edge-from').innerHTML = nodeOpts;
+  document.getElementById('edge-to').innerHTML = nodeOpts;
+
+  document.getElementById('admin-bld-list').innerHTML = BUILDINGS.map(b => `
+    <div onclick="selectBuildingForEdit('${b.id}')" class="p-2 rounded-lg border hover:border-sky-500 cursor-pointer flex items-center justify-between bg-white">
+      <div class="flex items-center gap-2">
+        <span class="w-3 h-3 rounded" style="background:${b.roofColor}"></span>
+        <span class="font-medium text-slate-800">${b.name}</span>
+      </div>
+      <span class="text-[10px] text-slate-400">(${b.x}, ${b.z})</span>
+    </div>
+  `).join('');
+
+  // 2. Edges List
+  document.getElementById('edge-count').textContent = EDGES.length;
+  document.getElementById('admin-edge-list').innerHTML = EDGES.map((e, idx) => `
+    <div class="p-2 rounded-lg border bg-white flex items-center justify-between gap-2">
+      <div class="min-w-0 flex-1">
+        <div class="font-semibold truncate ${e.closed ? 'line-through text-slate-400' : 'text-slate-800'}">
+          ${NODES[e.from]?.label || e.from} → ${NODES[e.to]?.label || e.to}
+        </div>
+        <div class="text-[10px] text-slate-500">${e.type.toUpperCase()} • ${e.dist} ม.</div>
+      </div>
+      <button onclick="toggleEdgeClosed(${idx})" class="px-2 py-0.5 rounded text-[10px] font-semibold ${e.closed ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}">
+        ${e.closed ? 'ปิดซ่อม' : 'เปิดใช้'}
+      </button>
+      <button onclick="deleteEdge(${idx})" class="text-rose-500 hover:text-rose-700 px-1"><i class="fa-solid fa-trash"></i></button>
+    </div>
+  `).join('');
+
+  // 3. Clinics List & Building Select
+  document.getElementById('edit-clinic-bld').innerHTML = BUILDINGS.map(b => `<option value="${b.id}">${b.name}</option>`).join('');
+  document.getElementById('admin-clinic-list').innerHTML = CLINICS.map((c, idx) => {
+    const b = BUILDINGS.find(x => x.id === c.building_id);
+    return `
+      <div class="p-2 rounded-lg border bg-white flex items-center justify-between gap-2">
+        <div class="min-w-0 flex-1">
+          <div class="font-semibold text-slate-800 truncate">${c.name}</div>
+          <div class="text-[10px] text-sky-700">${b ? b.name : c.building_id} • ${c.floor}</div>
+        </div>
+        <button onclick="editClinic(${idx})" class="text-sky-600 hover:underline text-[11px]">ย้าย/แก้</button>
+        <button onclick="deleteClinic(${idx})" class="text-rose-500 px-1"><i class="fa-solid fa-trash"></i></button>
+      </div>`;
+  }).join('');
+}
+
+function selectBuildingForEdit(bId) {
+  const b = BUILDINGS.find(x => x.id === bId);
+  if (!b) return;
+  selectedBuildingId = bId;
+  document.getElementById('bld-form-title').textContent = `กำลังแก้ไข: ${b.name}`;
+  document.getElementById('btn-del-bld').classList.remove('hidden');
+  document.getElementById('edit-bld-id').value = b.id;
+  document.getElementById('edit-bld-name').value = b.name;
+  document.getElementById('edit-bld-full').value = b.fullName;
+  document.getElementById('edit-bld-node').value = b.entryNode;
+  document.getElementById('edit-bld-x').value = b.x;
+  document.getElementById('edit-bld-z').value = b.z;
+  document.getElementById('edit-bld-w').value = b.w;
+  document.getElementById('edit-bld-d').value = b.d;
+  document.getElementById('edit-bld-h').value = b.h;
+  document.getElementById('edit-bld-color').value = b.color;
+  document.getElementById('edit-bld-roof').value = b.roofColor;
+  document.getElementById('edit-bld-desc').value = b.desc || '';
+}
+
+function liveUpdateBuilding() {
+  const id = document.getElementById('edit-bld-id').value;
+  const b = BUILDINGS.find(x => x.id === id);
+  if (!b) return;
+  b.x = Number(document.getElementById('edit-bld-x').value);
+  b.z = Number(document.getElementById('edit-bld-z').value);
+  b.w = Number(document.getElementById('edit-bld-w').value);
+  b.d = Number(document.getElementById('edit-bld-d').value);
+  b.h = Number(document.getElementById('edit-bld-h').value);
+  b.color = document.getElementById('edit-bld-color').value;
+  b.roofColor = document.getElementById('edit-bld-roof').value;
+  rebuildBuildings3D();
+}
+
+function applyBuildingForm() {
+  const id = document.getElementById('edit-bld-id').value;
+  const b = BUILDINGS.find(x => x.id === id);
+  if (!b) return;
+  b.name = document.getElementById('edit-bld-name').value;
+  b.fullName = document.getElementById('edit-bld-full').value;
+  b.entryNode = document.getElementById('edit-bld-node').value;
+  b.desc = document.getElementById('edit-bld-desc').value;
+  liveUpdateBuilding();
+  saveLocalState();
+  refreshAdminLists();
+  alert('อัปเดตข้อมูลอาคารเรียบร้อยแล้ว');
+}
+
+function deleteSelectedBuilding() {
+  const id = document.getElementById('edit-bld-id').value;
+  if (!id || !confirm('ต้องการลบอาคารนี้ออกจากแผนที่ 3D ใช่หรือไม่?')) return;
+  BUILDINGS = BUILDINGS.filter(b => b.id !== id);
+  rebuildBuildings3D();
+  saveLocalState();
+  refreshAdminLists();
+}
+
+function startAddBuildingOnMap() {
+  adminToolMode = 'add_building';
+  document.getElementById('admin-hint-text').textContent = '📍 คลิกบนพื้นที่ว่างในแผนที่ 3D เพื่อวางอาคารใหม่...';
+}
+
+function startAddNodeOnMap() {
+  adminToolMode = 'add_node';
+  document.getElementById('admin-hint-text').textContent = '📍 คลิกบนถนนหรือทางเดินในแผนที่ 3D เพื่อปักจุดทางแยกใหม่...';
+}
+
+function toggleConnectMode() {
+  adminToolMode = (adminToolMode === 'connect_edge') ? null : 'connect_edge';
+  connectSourceNode = null;
+  document.getElementById('admin-hint-text').textContent = adminToolMode
+    ? '🔗 คลิกจุด Node ต้นทาง แล้วคลิกจุด Node ปลายทางเพื่อสร้างเส้นทางเชื่อม...'
+    : 'คลิกเลือกตึกเพื่อแก้ไข หรือเลือกเครื่องมือด้านซ้าย';
+}
+
+function handleNodeClickInAdmin(nodeId) {
+  if (adminToolMode === 'connect_edge') {
+    if (!connectSourceNode) {
+      connectSourceNode = nodeId;
+      document.getElementById('admin-hint-text').textContent = `เลือกจุดต้นทาง [${NODES[nodeId].label}] แล้ว — คลิกจุดปลายทางต่อไป...`;
+    } else if (connectSourceNode !== nodeId) {
+      const p1 = NODES[connectSourceNode], p2 = NODES[nodeId];
+      const dist = Math.round(Math.hypot(p2.x - p1.x, p2.z - p1.z) * 2.2);
+      EDGES.push({
+        id: 'e_' + Date.now(), from: connectSourceNode, to: nodeId,
+        dist: Math.max(15, dist), type: 'walk', closed: false,
+        hint: `เดินจาก ${p1.label} ไปยัง ${p2.label}`
+      });
+      connectSourceNode = null;
+      adminToolMode = null;
+      rebuildEdges3D();
+      saveLocalState();
+      refreshAdminLists();
+      document.getElementById('admin-hint-text').textContent = '✅ สร้างเส้นทางเชื่อมใหม่เรียบร้อยแล้ว!';
+    }
+  } else {
+    document.getElementById('edge-from').value = nodeId;
+  }
+}
+
+function addNewEdge() {
+  const from = document.getElementById('edge-from').value;
+  const to = document.getElementById('edge-to').value;
+  if (from === to) return alert('จุดเริ่มต้นและปลายทางต้องไม่ซ้ำกัน');
+  EDGES.push({
+    id: 'e_' + Date.now(),
+    from, to,
+    dist: Number(document.getElementById('edge-dist').value) || 50,
+    type: document.getElementById('edge-type').value,
+    closed: false,
+    hint: document.getElementById('edge-hint').value || `ไปยัง ${NODES[to].label}`
+  });
+  rebuildEdges3D();
+  saveLocalState();
+  refreshAdminLists();
+}
+
+function toggleEdgeClosed(idx) {
+  EDGES[idx].closed = !EDGES[idx].closed;
+  rebuildEdges3D();
+  saveLocalState();
+  refreshAdminLists();
+}
+
+function deleteEdge(idx) {
+  EDGES.splice(idx, 1);
+  rebuildEdges3D();
+  saveLocalState();
+  refreshAdminLists();
+}
+
+function editClinic(idx) {
+  const c = CLINICS[idx];
+  document.getElementById('edit-clinic-id').value = c.id;
+  document.getElementById('edit-clinic-name').value = c.name;
+  document.getElementById('edit-clinic-bld').value = c.building_id;
+  document.getElementById('edit-clinic-floor').value = c.floor;
+  document.getElementById('edit-clinic-hours').value = c.open_hours || '';
+  document.getElementById('edit-clinic-phone').value = c.phone || '';
+  document.getElementById('edit-clinic-kw').value = c.keywords || '';
+}
+
+function saveClinicItem() {
+  const id = document.getElementById('edit-clinic-id').value || ('c_' + Date.now());
+  const obj = {
+    id,
+    name: document.getElementById('edit-clinic-name').value.trim(),
+    building_id: document.getElementById('edit-clinic-bld').value,
+    floor: document.getElementById('edit-clinic-floor').value.trim() || 'ชั้น 1',
+    open_hours: document.getElementById('edit-clinic-hours').value.trim() || '08:00 - 16:00 น.',
+    phone: document.getElementById('edit-clinic-phone').value.trim() || '-',
+    keywords: document.getElementById('edit-clinic-kw').value.trim()
+  };
+  if (!obj.name) return alert('กรุณากรอกชื่อคลินิก/หน่วยงาน');
+  const idx = CLINICS.findIndex(x => x.id === id);
+  if (idx >= 0) CLINICS[idx] = obj;
+  else CLINICS.push(obj);
+
+  document.getElementById('edit-clinic-id').value = '';
+  document.getElementById('edit-clinic-name').value = '';
+  saveLocalState();
+  refreshAdminLists();
+  alert('บันทึกการย้าย/เพิ่มหน่วยงานเรียบร้อยแล้ว');
+}
+
+function deleteClinic(idx) {
+  CLINICS.splice(idx, 1);
+  saveLocalState();
+  refreshAdminLists();
+}
+
+function saveLocalState() {
+  localStorage.setItem('cbhgo_buildings', JSON.stringify(BUILDINGS));
+  localStorage.setItem('cbhgo_nodes', JSON.stringify(NODES));
+  localStorage.setItem('cbhgo_edges', JSON.stringify(EDGES));
+  localStorage.setItem('cbhgo_clinics', JSON.stringify(CLINICS));
+}
+
+async function saveAllToCloud() {
+  saveLocalState();
+  if (!GAS_API_URL) {
+    alert('บันทึกข้อมูลลงเครื่องเรียบร้อยแล้ว! (หากต้องการซิงค์ให้ผู้ป่วยทุกคนเห็นพร้อมกัน กรุณาใส่ Google Apps Script URL ที่ปุ่ม "จุดยืน QR")');
+    return;
+  }
+  try {
+    const res = await fetch(GAS_API_URL, {
+      method: 'POST',
+      body: JSON.stringify({
+        action: 'save_layout',
+        admin_pin: 'cbh2026',
+        buildings: BUILDINGS,
+        nodes: NODES,
+        edges: EDGES,
+        clinics: CLINICS
+      })
+    });
+    const data = await res.json();
+    alert(data.message || 'บันทึกขึ้น Google Sheets เรียบร้อยแล้ว');
+  } catch (err) {
+    alert('บันทึกในเครื่องสำเร็จ แต่ไม่สามารถเชื่อมต่อ Google Sheets ได้ในขณะนี้');
+  }
+}
+
+function exportJsonFile() {
+  const blob = new Blob([JSON.stringify({ buildings: BUILDINGS, nodes: NODES, edges: EDGES, clinics: CLINICS }, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'cbh-go-map-backup.json';
+  a.click();
+}
+
+function importJsonFile(ev) {
+  const file = ev.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (data.buildings) BUILDINGS = data.buildings;
+      if (data.nodes) NODES = data.nodes;
+      if (data.edges) EDGES = data.edges;
+      if (data.clinics) CLINICS = data.clinics;
+      saveLocalState();
+      rebuildBuildings3D();
+      rebuildEdges3D();
+      rebuildNodeBadges();
+      refreshAdminLists();
+      alert('นำเข้าผังแผนที่ 3D เรียบร้อยแล้ว');
+    } catch (err) { alert('ไฟล์ JSON ไม่ถูกต้อง'); }
+  };
+  reader.readAsText(file);
+}
+
+// ============================================================================
+// 6. CANVAS RAYCASTING & CAMERA CONTROLS
+// ============================================================================
+function onCanvasClick(event) {
+  if (event.target !== renderer.domElement) return;
+  mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+  raycaster.setFromCamera(mouse, camera);
+
+  // Admin Placement Tools on Ground Plane
+  if (isAdminMode && (adminToolMode === 'add_building' || adminToolMode === 'add_node')) {
+    const groundHits = raycaster.intersectObject(groundPlane);
+    if (groundHits.length > 0) {
+      const pt = groundHits[0].point;
+      const gx = Math.round(pt.x), gz = Math.round(pt.z);
+      if (adminToolMode === 'add_building') {
+        const bName = prompt('ตั้งชื่ออาคารใหม่:', 'อาคารตรวจโรคใหม่');
+        if (bName) {
+          const newB = {
+            id: 'bld_' + Date.now(), name: bName, fullName: bName,
+            x: gx, z: gz, w: 14, d: 14, h: 14,
+            color: '#bae6fd', roofColor: '#0284c7',
+            entryNode: Object.keys(NODES)[0], desc: 'อาคารสร้างใหม่'
+          };
+          BUILDINGS.push(newB);
+          rebuildBuildings3D();
+          saveLocalState();
+          refreshAdminLists();
+          selectBuildingForEdit(newB.id);
+        }
+      } else if (adminToolMode === 'add_node') {
+        const nLabel = prompt('ตั้งชื่อจุดทางแยก/จุดเช็กอินใหม่:', 'ทางแยกใหม่');
+        if (nLabel) {
+          const nId = 'node_' + Date.now();
+          NODES[nId] = { x: gx, z: gz, label: nLabel };
+          rebuildNodeBadges();
+          saveLocalState();
+          refreshAdminLists();
+        }
+      }
+      adminToolMode = null;
+      document.getElementById('admin-hint-text').textContent = 'คลิกเลือกตึกเพื่อแก้ไข หรือเลือกเครื่องมือด้านซ้าย';
+      return;
+    }
+  }
+
+  // Click on Building
+  const hits = raycaster.intersectObjects(buildingMeshes);
+  if (hits.length > 0) {
+    const b = hits[0].object.userData.building;
+    if (isAdminMode) selectBuildingForEdit(b.id);
+    else openBuildingDrawer(b);
+  }
+}
+
+function toggleTrafficLayer() {
+  showTraffic = !showTraffic;
+  edgesGroup.visible = showTraffic;
+  document.getElementById('btn-traffic').classList.toggle('opacity-40', !showTraffic);
+}
+
+function toggleLabels() {
+  showLabels = !showLabels;
+  document.getElementById('labels-layer').style.display = showLabels ? 'block' : 'none';
+  document.getElementById('btn-labels').classList.toggle('opacity-40', !showLabels);
+}
+
+function resetCamera() {
+  isTopDown = false;
+  document.getElementById('btn-3d').textContent = '3D';
+  camera.position.set(0, 92, 118);
+  controls.target.set(0, 0, 4);
+}
+
+function toggleViewAngle() {
+  isTopDown = !isTopDown;
+  document.getElementById('btn-3d').textContent = isTopDown ? '2D' : '3D';
+  if (isTopDown) { camera.position.set(0, 155, 8); controls.target.set(0, 0, 0); }
+  else resetCamera();
+}
+
+function focusRouteCamera() {
+  const bId = document.getElementById('dest-select').value;
+  const b = BUILDINGS.find(x => x.id === bId);
+  if (b) { camera.position.set(b.x + 25, 58, b.z + 45); controls.target.set(b.x, 4, b.z); }
+}
+
+function toggleModal(id) {
+  const el = document.getElementById(id);
+  el.classList.toggle('hidden');
+  if (!el.classList.contains('hidden') && id === 'qr-modal') {
+    document.getElementById('gas-url-input').value = GAS_API_URL;
+  }
+}
+
+function simulateQr(startId) {
+  document.getElementById('start-select').value = startId;
+  toggleModal('qr-modal');
+  recalculateRoute();
+}
+
+function saveGasUrl() {
+  GAS_API_URL = document.getElementById('gas-url-input').value.trim();
+  localStorage.setItem('cbh_go_gas_url', GAS_API_URL);
+  toggleModal('qr-modal');
+  if (GAS_API_URL) loadFromCloud();
+}
+
+async function loadFromCloud(qrParam = '') {
+  if (!GAS_API_URL) return;
+  try {
+    const url = qrParam ? `${GAS_API_URL}?qr=${encodeURIComponent(qrParam)}` : GAS_API_URL;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.map_layout && Array.isArray(data.map_layout.buildings) && data.map_layout.buildings.length > 0) {
+      BUILDINGS = data.map_layout.buildings;
+      NODES = data.map_layout.nodes;
+      EDGES = data.map_layout.edges;
+      rebuildBuildings3D();
+      rebuildEdges3D();
+    }
+    if (Array.isArray(data.clinics) && data.clinics.length > 0) {
+      CLINICS = data.clinics;
+    }
+    syncAllDropdowns();
+    recalculateRoute();
+  } catch (e) {}
+}
+
+function onWindowResize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+
+  labelElements.forEach(item => {
+    const v = item.pos.clone().project(camera);
+    if (v.z > 1) item.el.style.display = 'none';
+    else {
+      item.el.style.display = 'block';
+      item.el.style.left = `${(v.x * 0.5 + 0.5) * window.innerWidth}px`;
+      item.el.style.top = `${(-v.y * 0.5 + 0.5) * window.innerHeight}px`;
+    }
+  });
+
+  nodeElements.forEach(item => {
+    const v = item.pos.clone().project(camera);
+    if (v.z > 1) item.el.style.display = 'none';
+    else {
+      item.el.style.display = 'block';
+      item.el.style.left = `${(v.x * 0.5 + 0.5) * window.innerWidth}px`;
+      item.el.style.top = `${(-v.y * 0.5 + 0.5) * window.innerHeight}px`;
+    }
+  });
+
+  renderer.render(scene, camera);
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  init3D();
+  syncAllDropdowns();
+  const params = new URLSearchParams(window.location.search);
+  const startParam = params.get('start');
+  if (startParam && NODES[startParam]) {
+    document.getElementById('start-select').value = startParam;
+  }
+  recalculateRoute();
+  if (GAS_API_URL) loadFromCloud(startParam || '');
+});
+</script>
+</body>
+</html>
